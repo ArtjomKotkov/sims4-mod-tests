@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<I c="EasyCheatsOpenMenuInteraction" i="interaction" m="easy_cheats.interactions" n="{{NAME}}" s="{{ID}}">
+  <V n="_saveable" t="disabled" />
+  <V n="content_score" t="disabled" />
+  <T n="display_name">{{DISPLAY_NAME_KEY}}<!--Easy Cheats--></T>
+  <T n="pie_menu_priority">1</T>
+  <U n="progress_bar_enabled">
+    <T n="bar_enabled">False</T>
+  </U>
+  <E n="target_type">OBJECT</E>
+</I>

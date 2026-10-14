@@ -1,5 +1,6 @@
 # Easy Cheats Menu — точка входа: регистрирует команды и показывает подсказку после загрузки участка.
 from easy_cheats import commands  # noqa: F401  (регистрация консольных команд)
+from easy_cheats import interactions  # noqa: F401  (пункт «Easy Cheats» в меню сима)
 from easy_cheats.dialogs import logger, notify
 
 _greeted = False
@@ -18,7 +19,7 @@ def _inject_zone_hook():
         if not _greeted:
             _greeted = True
             try:
-                notify('Мод загружен. Откройте консоль (Ctrl+Shift+C) и введите: uic')
+                notify('Мод загружен. Кликните по симу → «Easy Cheats» (или консоль Ctrl+Shift+C → uic).')
             except Exception as exc:
                 logger.exception('greeting failed', exc=exc)
         return result

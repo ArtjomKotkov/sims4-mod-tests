@@ -1,5 +1,7 @@
 # Easy Cheats Menu — меню, собранные из игровых окон выбора.
-from easy_cheats import cheats
+import services
+
+from easy_cheats import cheats, family
 from easy_cheats.dialogs import Option, ask_number, notify, show_menu
 
 
@@ -12,6 +14,7 @@ def main_menu(sim_info=None):
         Option('Навыки', lambda: skills_menu(sim_info)),
         Option('Мудлеты', lambda: buffs_menu(sim_info)),
         Option('Отношения', lambda: relationships_menu(sim_info)),
+        Option('Семья', lambda: family_menu(sim_info), 'Родители, дети, братья/сёстры, брак'),
         Option('Карьера', lambda: career_menu(sim_info)),
         Option('Жизненные цели', lambda: aspiration_menu(sim_info)),
         Option('Сезоны', season_menu, 'Нужно дополнение «Времена года»'),
@@ -160,6 +163,88 @@ def _relationship_editor(sim_info, target):
         show_menu(cheats.full_name(target), options)
 
     return build
+
+
+# --- Семья ----------------------------------------------------------------
+
+AGE_NAMES = {1: 'младенец', 2: 'малыш', 4: 'ребёнок', 8: 'подросток', 16: 'молодой', 32: 'взрослый', 64: 'пожилой'}
+
+
+def _known_sims(sim_info):
+    manager = services.sim_info_manager()
+    found = {}
+    for target in cheats.get_relationship_targets(sim_info):
+        found[target.sim_id] = target
+    for household in (sim_info.household, services.active_household()):
+        if household is not None:
+            for member in household.sim_info_gen():
+                found[member.sim_id] = member
+    found.pop(sim_info.sim_id, None)
+    return sorted((s for s in found.values() if manager.get(s.sim_id) is not None), key=cheats.full_name)
+
+
+def _confirm(question, action):
+    show_menu('Подтвердите', [
+        Option('Да', lambda: (action(), notify('Готово. Изменения видны в семейном древе.'))),
+        Option('Отмена', lambda: None),
+    ], text=question + '\n\nСовет: перед изменением родства сохраните игру под другим именем.')
+
+
+def _pick_sim(title, sims, on_pick):
+    show_menu(title, [Option(cheats.full_name(s), (lambda t: lambda: on_pick(t))(s),
+                             AGE_NAMES.get(int(s.age), '')) for s in sims],
+              text='Нет подходящих симов.' if not sims else '')
+
+
+def family_menu(sim_info):
+    name = cheats.full_name(sim_info)
+    known = lambda: _known_sims(sim_info)
+
+    def set_parent():
+        _pick_sim('Кто будет родителем {}?'.format(name), known(), lambda p: (
+            family.check_parent(p, sim_info),
+            _confirm('{} станет родителем {}.'.format(cheats.full_name(p), name),
+                     lambda: family.set_parent(p, sim_info))))
+
+    def add_child():
+        _pick_sim('Кто будет ребёнком {}?'.format(name), known(), lambda c: (
+            family.check_parent(sim_info, c),
+            _confirm('{} станет ребёнком {}.'.format(cheats.full_name(c), name),
+                     lambda: family.set_parent(sim_info, c))))
+
+    def siblings():
+        _pick_sim('Брат/сестра для {}'.format(name), known(), lambda b: _confirm(
+            '{} получит тех же родителей, что у {}, и станет братом/сестрой.'.format(cheats.full_name(b), name),
+            lambda: family.make_siblings(sim_info, b)))
+
+    def remove_parent():
+        current = [p for p in (family._sim_info(i) for i in family.parents(sim_info).values()) if p is not None]
+        _pick_sim('Убрать родителя', current, lambda p: _confirm(
+            '{} больше не будет родителем {}.'.format(cheats.full_name(p), name),
+            lambda: family.remove_parent(sim_info, p)))
+
+    def remove_child():
+        _pick_sim('Убрать ребёнка', family.children(sim_info), lambda c: _confirm(
+            '{} больше не будет ребёнком {}.'.format(cheats.full_name(c), name),
+            lambda: family.remove_parent(c, sim_info)))
+
+    def marry():
+        _pick_sim('С кем поженить {}?'.format(name), [s for s in known() if cheats.is_adult(s)], lambda b: _confirm(
+            '{} и {} станут супругами. Прежние браки обоих будут расторгнуты.'.format(name, cheats.full_name(b)),
+            lambda: family.marry(sim_info, b)))
+
+    def divorce():
+        _confirm('Развести {} со всеми супругами?'.format(name), lambda: family.divorce(sim_info))
+
+    show_menu('Семья: ' + name, [
+        Option('Назначить родителя…', set_parent),
+        Option('Добавить ребёнка…', add_child),
+        Option('Сделать братом/сестрой…', siblings, 'Через общих родителей, как в игре'),
+        Option('Поженить с…', marry),
+        Option('Развести', divorce),
+        Option('Убрать родителя…', remove_parent),
+        Option('Убрать ребёнка…', remove_child),
+    ], text=family.describe(sim_info))
 
 
 # --- Карьера --------------------------------------------------------------

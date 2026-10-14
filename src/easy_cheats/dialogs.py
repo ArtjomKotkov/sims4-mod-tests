@@ -62,6 +62,10 @@ def run_safely(callback, *args):
     try:
         callback(*args)
     except Exception as exc:
+        from easy_cheats.cheats import CheatError
+        if isinstance(exc, CheatError):
+            notify(str(exc))
+            return
         logger.exception('Easy Cheats action failed', exc=exc)
         notify('Ошибка: {}'.format(exc))
 

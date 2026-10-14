@@ -106,15 +106,14 @@ def ask_number(title, text, initial, callback, fallback_command=None):
     try:
         from sims4.collections import AttributeDict
         from ui.ui_dialog_generic import UiDialogTextInputOkCancel
-        from ui.ui_text_input import UiTextInput
+        from ui.ui_text_input import UiTextInput, _TextInputLengthFixed
 
         text_input = UiTextInput(sort_order=0, restricted_characters=None)
         text_input.default_text = None
         text_input.title = None
-        text_input.max_length = 16
         text_input.initial_value = _factory(initial)
         text_input.check_profanity = False
-        text_input.length_restriction = None
+        text_input.length_restriction = _TextInputLengthFixed(min_length=None, max_length=16)
         text_input.height = None
         inputs = AttributeDict({input_name: text_input})
         dialog = UiDialogTextInputOkCancel.TunableFactory(text_inputs=(input_name,)).default(

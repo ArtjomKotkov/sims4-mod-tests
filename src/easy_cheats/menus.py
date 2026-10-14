@@ -3,8 +3,9 @@ from easy_cheats import cheats
 from easy_cheats.dialogs import Option, ask_number, notify, show_menu
 
 
-def main_menu():
-    sim_info = cheats.active_sim_info()
+def main_menu(sim_info=None):
+    """sim_info — персонаж, на котором открыто меню (по умолчанию активный)."""
+    sim_info = sim_info or cheats.active_sim_info()
     show_menu('Easy Cheats', [
         Option('Деньги', money_menu, '§{}'.format(cheats.get_money())),
         Option('Потребности', lambda: needs_menu(sim_info)),
@@ -12,9 +13,10 @@ def main_menu():
         Option('Мудлеты', lambda: buffs_menu(sim_info)),
         Option('Отношения', lambda: relationships_menu(sim_info)),
         Option('Карьера', lambda: career_menu(sim_info)),
-        Option('Жизненные цели', aspiration_menu),
-        Option('Время и сезоны', time_menu),
-        Option('Изменить в CAS', cheats.edit_in_cas, 'Полное редактирование персонажа'),
+        Option('Жизненные цели', lambda: aspiration_menu(sim_info)),
+        Option('Сезоны', season_menu, 'Нужно дополнение «Времена года»'),
+        Option('Изменить в CAS', cheats.edit_in_cas, 'Полное редактирование активного персонажа')
+        if sim_info is cheats.active_sim_info() else None,
     ], text='Персонаж: {}'.format(cheats.full_name(sim_info)))
 
 
@@ -108,7 +110,7 @@ def buffs_menu(sim_info):
     options = [Option('Удалить все негативные', lambda: notify(
         'Удалено мудлетов: {}'.format(cheats.remove_negative_buffs(sim_info))))]
     for buff in cheats.get_buffs(sim_info):
-        options.append(Option(cheats.buff_label(buff), _remover(sim_info, buff),
+        options.append(Option(cheats.buff_label(sim_info, buff), _remover(sim_info, buff),
                               'Нажмите, чтобы удалить' + (' (негативный)' if cheats.buff_is_negative(buff) else '')))
     show_menu('Мудлеты', options)
 
@@ -140,17 +142,24 @@ def _relationship_editor(sim_info, target):
         return lambda: ask_number('Отношения', 'Значение от -100 до 100:', 100,
                                   lambda v: cheats.set_relationship_score(sim_info, target, track, v))
 
-    return lambda: show_menu(cheats.full_name(target), [
-        Option('Дружба: 100', set_score(friendship, 100)),
-        Option('Дружба: 50', set_score(friendship, 50)),
-        Option('Дружба: 0', set_score(friendship, 0)),
-        Option('Дружба: -100', set_score(friendship, -100)),
-        Option('Дружба: ввести…', custom(friendship)),
-        Option('Романтика: 100', set_score(romance, 100)),
-        Option('Романтика: 50', set_score(romance, 50)),
-        Option('Романтика: 0', set_score(romance, 0)),
-        Option('Романтика: ввести…', custom(romance)),
-    ])
+    def build():
+        options = [
+            Option('Дружба: 100', set_score(friendship, 100)),
+            Option('Дружба: 50', set_score(friendship, 50)),
+            Option('Дружба: 0', set_score(friendship, 0)),
+            Option('Дружба: -100', set_score(friendship, -100)),
+            Option('Дружба: ввести…', custom(friendship)),
+        ]
+        if cheats.romance_allowed(sim_info, target):  # не для детей/подростков и родственников
+            options += [
+                Option('Романтика: 100', set_score(romance, 100)),
+                Option('Романтика: 50', set_score(romance, 50)),
+                Option('Романтика: 0', set_score(romance, 0)),
+                Option('Романтика: ввести…', custom(romance)),
+            ]
+        show_menu(cheats.full_name(target), options)
+
+    return build
 
 
 # --- Карьера --------------------------------------------------------------
@@ -167,24 +176,20 @@ def _career_editor(sim_info, career):
     return lambda: show_menu(cheats.career_label(career, sim_info), [
         Option('Повысить', lambda: (career.promote(), notify('Повышение!'))),
         Option('Понизить', lambda: (career.demote(), notify('Понижение.'))),
-        Option('Продуктивность на максимум', lambda: cheats.max_performance(career)),
+        Option('Продуктивность на максимум', lambda: (cheats.max_performance(sim_info, career), notify('Готово.'))),
     ])
 
 
-# --- Жизненные цели, время ------------------------------------------------
+# --- Жизненные цели, сезоны ----------------------------------------------
 
-def aspiration_menu():
+def aspiration_menu(sim_info):
     show_menu('Жизненные цели', [
-        Option('Завершить текущий этап', cheats.complete_milestone),
-        Option('+1 000 очков удовлетворения', lambda: cheats.give_satisfaction(1000)),
-        Option('+10 000 очков удовлетворения', lambda: cheats.give_satisfaction(10000)),
+        Option('Завершить текущий этап', lambda: (cheats.complete_milestone(sim_info), notify('Этап завершён.'))),
+        Option('+1 000 очков удовлетворения', lambda: cheats.give_satisfaction(sim_info, 1000)),
+        Option('+10 000 очков удовлетворения', lambda: cheats.give_satisfaction(sim_info, 10000)),
     ])
 
 
-def time_menu():
-    options = [Option('Перевести часы на {:02d}:00'.format(h), (lambda hour: lambda: cheats.set_hour(hour))(h))
-               for h in (6, 8, 12, 17, 20, 23)]
-    options += [Option('Сезон: {}'.format(label), (lambda n: lambda: cheats.set_season(n))(name),
-                       'Нужно дополнение «Времена года»')
-                for name, label in cheats.SEASONS]
-    show_menu('Время и сезоны', options, text='Сейчас {}:00'.format(cheats.current_hour()))
+def season_menu():
+    show_menu('Сезоны', [Option(label, (lambda n: lambda: cheats.set_season(n))(name))
+                         for name, label in cheats.SEASONS])

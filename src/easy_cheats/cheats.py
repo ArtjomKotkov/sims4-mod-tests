@@ -1,4 +1,6 @@
 # Easy Cheats Menu — игровая логика читов (без интерфейса).
+# Всё вызывается напрямую через Python-API игры (сверено с декомпилированным кодом EA),
+# поэтому testingcheats не нужен и встроенные Cheat/Automation-команды не используются.
 import re
 
 import services
@@ -10,6 +12,8 @@ try:
     MONEY_REASON = getattr(Consts_pb2, 'TELEMETRY_MONEY_CHEAT', 0)
 except ImportError:
     MONEY_REASON = 0
+
+ADULT_AGE_MIN = 16  # sims.sim_info_types.Age.YOUNGADULT
 
 
 class CheatError(Exception):
@@ -49,11 +53,14 @@ def full_name(sim_info):
     return '{} {}'.format(sim_info.first_name, sim_info.last_name).strip() or str(sim_info.sim_id)
 
 
-def run_command(command):
-    """Выполняет встроенную команду игры от имени текущего клиента."""
+def is_adult(sim_info):
+    return int(sim_info.age) >= ADULT_AGE_MIN
+
+
+def run_live_command(command):
+    """Только для Live-команд игры: Cheat-команды через execute() без testingcheats молча не выполняются."""
     client = services.client_manager().get_first_client()
-    connection = client.id if client is not None else None
-    sims4.commands.execute(command, connection)
+    sims4.commands.execute(command, client.id if client is not None else None)
 
 
 # --- Деньги ---------------------------------------------------------------
@@ -66,7 +73,8 @@ def add_money(amount):
     funds = active_household().funds
     sim = services.get_active_sim()
     if amount >= 0:
-        funds.add(amount, MONEY_REASON, sim)
+        # count_as_earnings=False: читерские деньги не засчитываются в цели «заработать N»
+        funds.add(amount, MONEY_REASON, sim, count_as_earnings=False)
     else:
         funds.try_remove(min(-amount, funds.money), MONEY_REASON, sim)
     return funds.money
@@ -78,13 +86,6 @@ def set_money(amount):
 
 # --- Потребности ----------------------------------------------------------
 
-def _iter_stats(tracker):
-    try:
-        return list(tracker)
-    except TypeError:
-        return list(getattr(tracker, '_statistics', {}).values())
-
-
 def _stat_label(stat_type):
     name = getattr(stat_type, 'stat_name', None)
     return name if name is not None else pretty_name(stat_type)
@@ -93,14 +94,12 @@ def _stat_label(stat_type):
 def get_motives(sim_info):
     """Видимые потребности (голод, бодрость, ... жажда вампира и т.п.)."""
     result = []
-    for stat in _iter_stats(sim_info.commodity_tracker):
-        stat_type = stat.stat_type
-        name = tuning_name(stat_type).lower()
-        if 'motive' not in name or 'hidden' in name:
+    for stat in list(sim_info.commodity_tracker):
+        if not getattr(stat, 'is_visible', False) or getattr(stat, 'is_ranked', False):
             continue
-        if not getattr(stat_type, 'visible', True):
-            continue
-        result.append(stat)
+        name = tuning_name(stat.stat_type).lower()
+        if 'motive' in name and 'hidden' not in name:
+            result.append(stat)
     return result
 
 
@@ -109,39 +108,30 @@ def set_motive(sim_info, stat_type, value):
     sim_info.commodity_tracker.set_value(stat_type, value)
 
 
-def fill_motives(sim_info, value=None):
+def fill_motives(sim_info):
+    # То же, что делает встроенный чит stats.fill_commodities.
+    sim_info.commodity_tracker.set_all_commodities_to_best_value(visible_only=True)
+
+
+def set_all_motives(sim_info, value):
     for stat in get_motives(sim_info):
-        stat_type = stat.stat_type
-        set_motive(sim_info, stat_type, stat_type.max_value if value is None else value)
+        set_motive(sim_info, stat.stat_type, value)
 
 
 # --- Навыки ---------------------------------------------------------------
 
-def _skill_class():
-    from statistics.skill import Skill
-    return Skill
-
-
 def get_sim_skills(sim_info):
-    if hasattr(sim_info, 'all_skills'):
-        return list(sim_info.all_skills())
-    skill_cls = _skill_class()
-    return [s for s in _iter_stats(sim_info.commodity_tracker) if isinstance(s, skill_cls)]
+    return list(sim_info.all_skills())
 
 
 def get_all_skill_types(sim_info):
-    skill_cls = _skill_class()
     manager = services.get_instance_manager(sims4.resources.Types.STATISTIC)
     result = []
-    for stat_type in manager.types.values():
-        if not (isinstance(stat_type, type) and issubclass(stat_type, skill_cls)):
+    for skill_type in manager.all_skills_gen():
+        if getattr(skill_type, 'hidden', False) or getattr(skill_type, 'stat_name', None) is None:
             continue
-        if getattr(stat_type, 'hidden', False) or getattr(stat_type, 'stat_name', None) is None:
-            continue
-        ages = getattr(stat_type, 'ages', None)
-        if ages and sim_info.age not in ages:
-            continue
-        result.append(stat_type)
+        if skill_type.can_add(sim_info):  # возраст, вид, наличие дополнения
+            result.append(skill_type)
     return result
 
 
@@ -150,50 +140,45 @@ def skill_label(skill_type):
 
 
 def skill_level(sim_info, skill_type):
-    stat = sim_info.commodity_tracker.get_statistic(skill_type)
-    return stat.get_user_value() if stat is not None else 0
+    return sim_info.commodity_tracker.get_user_value(skill_type)
 
 
 def set_skill_level(sim_info, skill_type, level):
-    level = max(0, min(getattr(skill_type, 'max_level', 10), level))
-    stat = sim_info.commodity_tracker.get_statistic(skill_type, add=True)
-    if stat is None:
+    tracker = sim_info.commodity_tracker
+    level = max(0, min(skill_type.max_level, level))
+    if tracker.get_statistic(skill_type) is None and tracker.add_statistic(skill_type) is None:
         raise CheatError('Этот навык нельзя добавить персонажу.')
-    if hasattr(stat, 'set_user_value'):
-        stat.set_user_value(level)
-    else:
-        sim_info.commodity_tracker.set_value(skill_type, skill_type.convert_from_user_value(level))
+    current = tracker.get_user_value(skill_type)
+    if level <= current:
+        tracker.set_user_value(skill_type, level)
+        return
+    # Как stats.set_skill_level: по одному уровню, чтобы сработали награды за каждый уровень.
+    for n in range(current + 1, level + 1):
+        tracker.set_user_value(skill_type, n)
 
 
 def max_all_skills(sim_info):
     for stat in get_sim_skills(sim_info):
-        set_skill_level(sim_info, stat.stat_type, getattr(stat.stat_type, 'max_level', 10))
+        set_skill_level(sim_info, stat.stat_type, stat.stat_type.max_level)
 
 
 # --- Мудлеты --------------------------------------------------------------
 
-NEGATIVE_MOODS = ('sad', 'angry', 'tense', 'uncomfortable', 'embarrass', 'bored', 'dazed', 'scared')
-
-
 def get_buffs(sim_info):
-    component = sim_info.Buffs
-    try:
-        buffs = list(component)
-    except TypeError:
-        buffs = list(getattr(component, '_active_buffs', {}).values())
-    return [b for b in buffs if getattr(b, 'visible', True) and getattr(b.buff_type, 'buff_name', None) is not None]
+    return [b for b in list(sim_info.Buffs) if b.visible and b.buff_type.buff_name is not None]
 
 
-def buff_label(buff):
-    return buff.buff_type.buff_name
+def buff_label(sim_info, buff):
+    return buff.buff_type.buff_name(sim_info)
 
 
 def buff_is_negative(buff):
-    mood = getattr(buff, 'mood_type', None)
-    return mood is not None and any(m in tuning_name(mood).lower() for m in NEGATIVE_MOODS)
+    from buffs import BuffPolarity
+    return buff.polarity == BuffPolarity.NEGATIVE
 
 
 def remove_buff(sim_info, buff):
+    # Мудлеты от основных потребностей игра сама не даст удалить (это безопасно).
     sim_info.Buffs.remove_buff_by_type(buff.buff_type)
 
 
@@ -228,6 +213,15 @@ def get_relationship_score(sim_info, target, track):
     return sim_info.relationship_tracker.get_relationship_score(target.sim_id, track)
 
 
+def romance_allowed(sim_info, target):
+    if not (is_adult(sim_info) and is_adult(target)):
+        return False
+    try:
+        return not sim_info.genealogy.get_family_relationship_bit(target.sim_id)
+    except Exception:
+        return True
+
+
 def set_relationship_score(sim_info, target, track, value):
     value = max(-100, min(100, value))
     sim_info.relationship_tracker.set_relationship_score(target.sim_id, value, track)
@@ -249,39 +243,56 @@ def career_label(career, sim_info):
     return pretty_name(type(career))
 
 
-def max_performance(career):
-    stat = career.work_performance_stat
+def max_performance(sim_info, career):
+    # Как careers.set_performance в коде EA.
+    stat = sim_info.statistic_tracker.get_statistic(career.current_level_tuning.performance_stat, add=True)
     stat.set_value(stat.max_value)
+    sim_info.career_tracker.resend_career_data()
 
 
-# --- Время, сезоны, прочее (через встроенные команды игры) -----------------
+# --- Жизненные цели -------------------------------------------------------
 
-def current_hour():
-    return services.time_service().sim_now.hour()
+def complete_milestone(sim_info):
+    """Копия логики aspirations.complete_current_milestone из кода EA."""
+    aspiration = sim_info.primary_aspiration
+    if aspiration is None:
+        raise CheatError('У персонажа нет жизненной цели.')
+    track = services.get_instance_manager(sims4.resources.Types.ASPIRATION_TRACK).get(aspiration.guid64)
+    if track is None:
+        raise CheatError('Жизненная цель не найдена.')
+    tracker = sim_info.aspiration_tracker
+    for _, milestone in track.get_aspirations():
+        if tracker.milestone_completed(milestone):
+            continue
+        just_completed = []
+        for objective in milestone.objectives:
+            if not tracker.objective_completed(objective):
+                tracker.complete_objective(objective, milestone)
+                just_completed.append(objective)
+        tracker.complete_milestone(milestone, sim_info)
+        tracker.send_if_dirty()
+        tracker.update_objectives_after_ui_change(just_completed)
+        return True
+    raise CheatError('Все этапы этой цели уже выполнены.')
 
 
-def set_hour(hour):
-    now = services.time_service().sim_now
-    minutes = ((hour - now.hour()) % 24) * 60 - now.minute()
-    if minutes <= 0:
-        minutes += 24 * 60
-    run_command('clock.advance_game_time {} {} 0'.format(minutes // 60, minutes % 60))
+def give_satisfaction(sim_info, points):
+    from protocolbuffers.DistributorOps_pb2 import SetWhimBucks
+    sim_info.apply_satisfaction_points_delta(points, SetWhimBucks.COMMAND)
 
+
+# --- Сезоны ---------------------------------------------------------------
 
 SEASONS = (('SPRING', 'Весна'), ('SUMMER', 'Лето'), ('FALL', 'Осень'), ('WINTER', 'Зима'))
 
 
 def set_season(season_name):
-    run_command('seasons.set_season {}'.format(season_name))
-
-
-def complete_milestone():
-    run_command('aspirations.complete_current_milestone')
-
-
-def give_satisfaction(points):
-    run_command('sims.give_satisfaction_points {}'.format(points))
+    service = services.season_service()
+    if service is None:
+        raise CheatError('Нужно дополнение «Времена года».')
+    from seasons.seasons_enums import SeasonSetSource, SeasonType
+    service.set_season(getattr(SeasonType, season_name), SeasonSetSource.CHEAT, None)
 
 
 def edit_in_cas():
-    run_command('sims.modify_in_cas')
+    run_live_command('sims.modify_in_cas')  # Live-команда игры, работает без testingcheats

@@ -1,4 +1,4 @@
-# Easy Cheats Menu — консольные команды (Ctrl+Shift+C). testingcheats не нужен.
+# Easy Cheats Menu — консольные команды (Ctrl+Shift+C). testingcheats для них не нужен.
 import sims4.commands
 
 from easy_cheats import cheats, menus
@@ -39,7 +39,13 @@ def set_money(amount: int = 0, _connection=None):
 
 @sims4.commands.Command('uic.needs', command_type=LIVE)
 def fill_needs(value: int = None, _connection=None):
-    return _run(_connection, lambda: cheats.fill_motives(cheats.active_sim_info(), value))
+    def apply():
+        sim_info = cheats.active_sim_info()
+        if value is None:
+            cheats.fill_motives(sim_info)
+        else:
+            cheats.set_all_motives(sim_info, value)
+    return _run(_connection, apply)
 
 
 @sims4.commands.Command('uic.needs_household', command_type=LIVE)
